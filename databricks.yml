@@ -1,0 +1,56 @@
+bundle:
+  name: fashion-visual-search
+
+workspace:
+  host: https://adb-984752964297111.11.azuredatabricks.net
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+    resources:
+      jobs:
+        embedding_pipeline:
+          name: "[DEV] Fashion Embedding Pipeline"
+          tasks:
+            - task_key: generate_embeddings
+              notebook_task:
+                notebook_path: ../notebooks/03_image_embeddings_pipeline
+              existing_cluster_id: "0304-162117-qgsi1x04"
+
+        user_features_pipeline:
+          name: "[DEV] User Style Features Pipeline"
+          tasks:
+            - task_key: compute_user_features
+              notebook_task:
+                notebook_path: ../notebooks/05_user_style_features
+              existing_cluster_id: "0304-162117-qgsi1x04"
+
+  prod:
+    mode: production
+    workspace:
+      root_path: /Workspace/Users/shared/.bundle/${bundle.name}/${bundle.target}
+    resources:
+      jobs:
+        embedding_pipeline:
+          name: "[PROD] Fashion Embedding Pipeline"
+          tasks:
+            - task_key: generate_embeddings
+              notebook_task:
+                notebook_path: ../notebooks/03_image_embeddings_pipeline
+              existing_cluster_id: "0304-162117-qgsi1x04"
+
+        user_features_pipeline:
+          name: "[PROD] User Style Features Pipeline"
+          tasks:
+            - task_key: compute_user_features
+              notebook_task:
+                notebook_path: ../notebooks/05_user_style_features
+              existing_cluster_id: "0304-162117-qgsi1x04"
+
+artifacts:
+  default:
+    type: whl
+    path: .

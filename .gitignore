@@ -1,0 +1,96 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.pytest_cache/
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# Databricks
+.databricks/
+.dbx/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# IPython
+profile_default/
+ipython_config.py
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Data files (don't commit large datasets)
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+
+# Model artifacts (large files)
+models/*.pkl
+models/*.h5
+models/*.pt
+models/*.pth
+
+# Credentials and secrets
+.env
+.databrickscfg
+*.pem
+*.key
+credentials.json
+
+# MLflow
+mlruns/
+mlartifacts/
+
+# Temporary files
+*.log
+*.tmp
+.tmp/
+
+# Sample data allowed
+!data/sample/*

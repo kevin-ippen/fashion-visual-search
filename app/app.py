@@ -434,8 +434,8 @@ with tab1:
             key=f"product_select_{st.session_state.random_seed}"
         )
 
-        # Fallback to first product if selectbox returns invalid value
-        if not selected_product_name or selected_product_name not in product_names:
+        # Only do fallback if product_names is not empty
+        if (not selected_product_name or selected_product_name not in product_names) and product_names:
             selected_product_name = product_names[0]
     
     with col2:

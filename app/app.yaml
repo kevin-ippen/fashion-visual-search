@@ -1,40 +1,13 @@
-# Databricks App Configuration
-# Service principal authentication using Databricks secrets
+command: ["streamlit", "run", "app.py"]
 
-name: fashion-boutique
-description: AI-Powered Fashion Shopping Experience with Vector Search and Claude
-
-# App configuration
-resources:
-  - name: fashion-app
-    description: Fashion e-commerce app with AI-powered search
-    config:
-      streamlit:
-        file: app.py
-
-# Environment variables
 env:
-  - name: SQL_WAREHOUSE_ID
-    value: "REPLACE_WITH_YOUR_WAREHOUSE_ID"  # Get from SQL Warehouse's HTTP Path
-
-# Permissions for accessing secret scope
-permissions:
-  secret_scopes:
-    - scope: redditscope
-      permission: READ
-
-# Compute resources (optional)
-compute:
-  size: "SMALL"  # Options: SMALL, MEDIUM, LARGE
-
-# Authentication configuration:
-# - App uses service principal credentials stored in Databricks secret scope
-# - Secret scope: 'redditscope', key: 'redditkey'
-# - PAT token is used for Vector Search and SQL Warehouse authentication
-#
-# Required resources:
-# 1. SQL Warehouse (ID specified above)
-# 2. Tables: main.fashion_demo.products, product_image_embeddings, user_style_features
-# 3. Vector Search endpoint: fashion_vector_search
-# 4. Model endpoint: databricks-claude-sonnet-4-5
-# 5. Secret scope access: redditscope (with redditkey containing PAT)
+  - name: CATALOG
+    value: "main"
+  - name: 'SQL_WAREHOUSE_ID'
+    value: 'http://adb-984752964297111.11.azuredatabricks.net/sql/1.0/warehouses/148ccb90800933a1'
+  - name: SCHEMA  
+    value: "fashion_demo"
+  - name: VECTOR_SEARCH_ENDPOINT
+    value: "fashion_vector_search"
+  - name: CLAUDE_ENDPOINT
+    value: "databricks-claude-sonnet-4-5"

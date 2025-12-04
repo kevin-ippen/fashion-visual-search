@@ -18,6 +18,10 @@
 
 # COMMAND ----------
 
+dbutils.secrets.get(scope="redditscope", key="redditkey")
+
+# COMMAND ----------
+
 # Configuration
 CATALOG = "main"
 SCHEMA = "fashion_demo"

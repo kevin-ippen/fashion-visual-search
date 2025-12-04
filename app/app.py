@@ -444,12 +444,18 @@ with tab1:
             st.rerun()
     
     st.markdown("</div>", unsafe_allow_html=True)
-    
-    # Get selected product
-    selected_product = filtered_products[
+
+    # Get selected product with safety check
+    selected_product_df = filtered_products[
         filtered_products["product_display_name"] == selected_product_name
-    ].iloc[0]
-    
+    ]
+
+    if selected_product_df.empty:
+        st.warning("Selected product not found. Please choose another product.")
+        st.stop()
+
+    selected_product = selected_product_df.iloc[0]
+
     # Display selected product
     st.markdown("### 📌 Your Selection")
     col_a, col_b = st.columns([1, 3])

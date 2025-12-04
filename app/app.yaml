@@ -1,5 +1,5 @@
 # Databricks App Configuration
-# User-level authorization - Databricks handles all permissions automatically
+# Service principal authentication using Databricks secrets
 
 name: fashion-boutique
 description: AI-Powered Fashion Shopping Experience with Vector Search and Claude
@@ -11,28 +11,30 @@ resources:
     config:
       streamlit:
         file: app.py
-        
+
 # Environment variables
 env:
   - name: SQL_WAREHOUSE_ID
     value: "REPLACE_WITH_YOUR_WAREHOUSE_ID"  # Get from SQL Warehouse's HTTP Path
 
-# User-level authorization enabled
-# Databricks automatically handles:
-# - User authentication
-# - SQL Warehouse permissions
-# - Vector Search access
-# - Model serving endpoints
-# No tokens or secrets needed!
+# Permissions for accessing secret scope
+permissions:
+  secret_scopes:
+    - scope: redditscope
+      permission: READ
 
 # Compute resources (optional)
 compute:
   size: "SMALL"  # Options: SMALL, MEDIUM, LARGE
 
-# Required resources that users need access to:
+# Authentication configuration:
+# - App uses service principal credentials stored in Databricks secret scope
+# - Secret scope: 'redditscope', key: 'redditkey'
+# - PAT token is used for Vector Search and SQL Warehouse authentication
+#
+# Required resources:
 # 1. SQL Warehouse (ID specified above)
 # 2. Tables: main.fashion_demo.products, product_image_embeddings, user_style_features
 # 3. Vector Search endpoint: fashion_vector_search
 # 4. Model endpoint: databricks-claude-sonnet-4-5
-#
-# Users will inherit permissions based on their workspace access
+# 5. Secret scope access: redditscope (with redditkey containing PAT)

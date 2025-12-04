@@ -11,12 +11,12 @@ from dataclasses import dataclass
 import random
 import os
 
-# Configuration
-CATALOG = "main"
-SCHEMA = "fashion_demo"
-VECTOR_SEARCH_ENDPOINT = "fashion_vector_search"
+# Configuration - read from environment or use defaults
+CATALOG = os.getenv("CATALOG", "main")
+SCHEMA = os.getenv("SCHEMA", "fashion_demo")
+VECTOR_SEARCH_ENDPOINT = os.getenv("VECTOR_SEARCH_ENDPOINT", "fashion_vector_search")
 INDEX_NAME = f"{CATALOG}.{SCHEMA}.product_embeddings_index"
-CLAUDE_ENDPOINT = "databricks-claude-sonnet-4-5"
+CLAUDE_ENDPOINT = os.getenv("CLAUDE_ENDPOINT", "databricks-claude-sonnet-4-5")
 
 # SQL Warehouse ID - configured in app settings
 SQL_WAREHOUSE_ID = os.getenv("SQL_WAREHOUSE_ID")
@@ -120,26 +120,37 @@ def get_vector_search_client():
 
 @st.cache_resource
 def get_sql_connection():
-    """Create SQL Warehouse connection using service principal authentication."""
+    """Create SQL Warehouse connection using available authentication."""
     if not SQL_WAREHOUSE_ID:
         st.error("⚠️ SQL_WAREHOUSE_ID not configured. Please set it in app configuration.")
         return None
 
     try:
-        # Get workspace client and retrieve PAT from secrets
+        # Get workspace client for configuration
         w = get_workspace_client()
-        pat_token = w.secrets.get_secret(scope=SECRET_SCOPE, key=SECRET_KEY).value
 
-        # Connect to SQL Warehouse with PAT authentication
-        conn = connect(
-            server_hostname=w.config.host.replace("https://", ""),
-            http_path=f"/sql/1.0/warehouses/{SQL_WAREHOUSE_ID}",
-            access_token=pat_token
-        )
+        # For Databricks Apps, try using the workspace client's authentication first
+        # If the workspace client has a token, use it; otherwise try secrets
+        if w.config.token:
+            # Use workspace client's token (app authentication)
+            conn = connect(
+                server_hostname=w.config.host.replace("https://", ""),
+                http_path=f"/sql/1.0/warehouses/{SQL_WAREHOUSE_ID}",
+                access_token=w.config.token
+            )
+        else:
+            # Fall back to PAT from secrets
+            pat_token = w.secrets.get_secret(scope=SECRET_SCOPE, key=SECRET_KEY).value
+            conn = connect(
+                server_hostname=w.config.host.replace("https://", ""),
+                http_path=f"/sql/1.0/warehouses/{SQL_WAREHOUSE_ID}",
+                access_token=pat_token
+            )
+
         return conn
     except Exception as e:
         st.error(f"Failed to connect to SQL Warehouse: {e}")
-        st.info(f"Ensure the secret '{SECRET_KEY}' exists in scope '{SECRET_SCOPE}' and you have access to the SQL Warehouse.")
+        st.info(f"Check: 1) SQL Warehouse ID is correct, 2) Warehouse is running, 3) App has permissions to access it")
         return None
 
 # Initialize clients in order (workspace client first for auth context)

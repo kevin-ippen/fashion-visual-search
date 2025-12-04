@@ -21,6 +21,10 @@ CLAUDE_ENDPOINT = "databricks-claude-sonnet-4-5"
 # SQL Warehouse ID - configured in app settings
 SQL_WAREHOUSE_ID = os.getenv("SQL_WAREHOUSE_ID")
 
+# Secret scope configuration for authentication
+SECRET_SCOPE = "redditscope"
+SECRET_KEY = "redditkey"
+
 # Page config
 st.set_page_config(
     page_title="Fashion Boutique - AI-Powered Shopping",
@@ -95,32 +99,47 @@ def get_workspace_client():
 
 @st.cache_resource
 def get_vector_search_client():
-    """Initialize Vector Search client with user auth."""
-    # Get workspace client first to use its authentication context
-    w = get_workspace_client()
-    # Initialize VectorSearchClient with workspace URL for proper authentication
-    return VectorSearchClient(
-        workspace_url=w.config.host,
-        personal_access_token=w.config.token,
-        disable_notice=True
-    )
+    """Initialize Vector Search client with service principal auth from secrets."""
+    try:
+        # Get workspace client first
+        w = get_workspace_client()
+
+        # Retrieve PAT from Databricks secrets
+        pat_token = w.secrets.get_secret(scope=SECRET_SCOPE, key=SECRET_KEY).value
+
+        # Initialize VectorSearchClient with workspace URL and PAT from secrets
+        return VectorSearchClient(
+            workspace_url=w.config.host,
+            personal_access_token=pat_token,
+            disable_notice=True
+        )
+    except Exception as e:
+        st.error(f"Failed to initialize Vector Search client: {e}")
+        st.info(f"Ensure the secret '{SECRET_KEY}' exists in scope '{SECRET_SCOPE}'")
+        return None
 
 @st.cache_resource
 def get_sql_connection():
-    """Create SQL Warehouse connection using user authentication."""
+    """Create SQL Warehouse connection using service principal authentication."""
     if not SQL_WAREHOUSE_ID:
         st.error("⚠️ SQL_WAREHOUSE_ID not configured. Please set it in app configuration.")
         return None
-    
+
     try:
-        # Use default authentication - Databricks handles user permissions
+        # Get workspace client and retrieve PAT from secrets
+        w = get_workspace_client()
+        pat_token = w.secrets.get_secret(scope=SECRET_SCOPE, key=SECRET_KEY).value
+
+        # Connect to SQL Warehouse with PAT authentication
         conn = connect(
-            http_path=f"/sql/1.0/warehouses/{SQL_WAREHOUSE_ID}"
+            server_hostname=w.config.host.replace("https://", ""),
+            http_path=f"/sql/1.0/warehouses/{SQL_WAREHOUSE_ID}",
+            access_token=pat_token
         )
         return conn
     except Exception as e:
         st.error(f"Failed to connect to SQL Warehouse: {e}")
-        st.info("Ensure you have access to the SQL Warehouse and it's running.")
+        st.info(f"Ensure the secret '{SECRET_KEY}' exists in scope '{SECRET_SCOPE}' and you have access to the SQL Warehouse.")
         return None
 
 # Initialize clients in order (workspace client first for auth context)
@@ -235,18 +254,23 @@ def get_embedding_vector(embedding):
 def search_similar_products(product_id: int, num_results: int = 12, budget: float = None):
     """Search for visually similar products using Vector Search."""
     try:
+        # Check if Vector Search client is initialized
+        if vsc is None:
+            st.error("Vector Search client not initialized. Check authentication configuration.")
+            return []
+
         # Get embedding
         product_emb = embeddings_pd[embeddings_pd["product_id"] == product_id]
         if product_emb.empty:
             return []
-        
+
         query_embedding = product_emb.iloc[0]["image_embedding"]
         query_vector = get_embedding_vector(query_embedding)
-        
+
         if query_vector is None:
             return []
-        
-        # Search using user's permissions
+
+        # Search using service principal authentication
         vs_index = vsc.get_index(
             endpoint_name=VECTOR_SEARCH_ENDPOINT,
             index_name=INDEX_NAME

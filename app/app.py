@@ -120,7 +120,7 @@ def get_vector_search_client():
 
 @st.cache_resource
 def get_sql_connection():
-    """Create SQL Warehouse connection using available authentication."""
+    """Create SQL Warehouse connection using PAT from secrets."""
     if not SQL_WAREHOUSE_ID:
         st.error("⚠️ SQL_WAREHOUSE_ID not configured. Please set it in app configuration.")
         return None
@@ -129,28 +129,40 @@ def get_sql_connection():
         # Get workspace client for configuration
         w = get_workspace_client()
 
-        # For Databricks Apps, try using the workspace client's authentication first
-        # If the workspace client has a token, use it; otherwise try secrets
-        if w.config.token:
-            # Use workspace client's token (app authentication)
-            conn = connect(
-                server_hostname=w.config.host.replace("https://", ""),
-                http_path=f"/sql/1.0/warehouses/{SQL_WAREHOUSE_ID}",
-                access_token=w.config.token
-            )
-        else:
-            # Fall back to PAT from secrets
-            pat_token = w.secrets.get_secret(scope=SECRET_SCOPE, key=SECRET_KEY).value
-            conn = connect(
-                server_hostname=w.config.host.replace("https://", ""),
-                http_path=f"/sql/1.0/warehouses/{SQL_WAREHOUSE_ID}",
-                access_token=pat_token
-            )
+        # Get connection details
+        server_hostname = w.config.host.replace("https://", "").replace("http://", "")
+        http_path = f"/sql/1.0/warehouses/{SQL_WAREHOUSE_ID}"
 
+        # Debug info (remove after fixing)
+        st.info(f"🔍 Connecting to: {server_hostname}")
+        st.info(f"🔍 HTTP Path: {http_path}")
+
+        # Use PAT from secrets for authentication
+        try:
+            pat_token = w.secrets.get_secret(scope=SECRET_SCOPE, key=SECRET_KEY).value
+            st.success(f"✅ Retrieved PAT from {SECRET_SCOPE}/{SECRET_KEY}")
+        except Exception as secret_error:
+            st.error(f"❌ Failed to retrieve secret: {secret_error}")
+            return None
+
+        # Connect to SQL Warehouse with PAT authentication
+        conn = connect(
+            server_hostname=server_hostname,
+            http_path=http_path,
+            access_token=pat_token
+        )
+
+        st.success("✅ SQL Warehouse connection established")
         return conn
+
     except Exception as e:
-        st.error(f"Failed to connect to SQL Warehouse: {e}")
-        st.info(f"Check: 1) SQL Warehouse ID is correct, 2) Warehouse is running, 3) App has permissions to access it")
+        st.error(f"❌ Failed to connect to SQL Warehouse: {type(e).__name__}: {str(e)}")
+        st.info("**Troubleshooting:**")
+        st.info("1. Verify SQL Warehouse ID is correct and warehouse is running")
+        st.info("2. Check that the PAT in secrets has 'Can Use' permission on the SQL Warehouse")
+        st.info("3. Ensure the PAT has SELECT permissions on the tables")
+        import traceback
+        st.code(traceback.format_exc())
         return None
 
 # Initialize clients in order (workspace client first for auth context)

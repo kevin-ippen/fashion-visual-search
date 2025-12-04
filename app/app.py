@@ -89,14 +89,21 @@ st.markdown("""
 
 # Initialize clients - using default user authentication
 @st.cache_resource
-def get_vector_search_client():
-    """Initialize Vector Search client with user auth."""
-    return VectorSearchClient(disable_notice=True)
-
-@st.cache_resource
 def get_workspace_client():
     """Initialize Workspace client with user auth."""
     return WorkspaceClient()
+
+@st.cache_resource
+def get_vector_search_client():
+    """Initialize Vector Search client with user auth."""
+    # Get workspace client first to use its authentication context
+    w = get_workspace_client()
+    # Initialize VectorSearchClient with workspace URL for proper authentication
+    return VectorSearchClient(
+        workspace_url=w.config.host,
+        personal_access_token=w.config.token,
+        disable_notice=True
+    )
 
 @st.cache_resource
 def get_sql_connection():
@@ -116,8 +123,9 @@ def get_sql_connection():
         st.info("Ensure you have access to the SQL Warehouse and it's running.")
         return None
 
-vsc = get_vector_search_client()
+# Initialize clients in order (workspace client first for auth context)
 w = get_workspace_client()
+vsc = get_vector_search_client()
 sql_conn = get_sql_connection()
 
 # Load data using SQL Warehouse with user permissions

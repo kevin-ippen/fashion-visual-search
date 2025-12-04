@@ -134,6 +134,11 @@ if actual_dimension != EMBEDDING_DIMENSION:
 
 # COMMAND ----------
 
+# DBTITLE 1,Enable Change Data Feed on Source Table
+
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Create Vector Search Index
 
@@ -206,6 +211,16 @@ while elapsed < max_wait:
 
 if elapsed >= max_wait:
     print("WARNING: Index did not come online within timeout")
+
+# COMMAND ----------
+
+# DBTITLE 1,Check Index Status
+
+
+# COMMAND ----------
+
+# DBTITLE 1,Trigger Index Sync
+
 
 # COMMAND ----------
 

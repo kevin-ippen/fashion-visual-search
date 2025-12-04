@@ -1,183 +1,115 @@
-# Dataset Guide
+%md
+# Kaggle Fashion Dataset to Unity Catalog
+# This notebook downloads the Fashion Product Images dataset from Kaggle and uploads it to Unity Catalog
 
-## Fashion Product Images Dataset
+# Step 1: Install required packages
+%pip install kaggle opendatasets --quiet
+dbutils.library.restartPython()
 
-### Overview
+# Step 2: Configure Kaggle credentials
+# You need to download your kaggle.json from https://www.kaggle.com/settings -> API -> Create New Token
+# Then upload it to Databricks or set environment variables
 
-This project uses the **Fashion Product Images Dataset** from Kaggle, which contains approximately 44,000 high-resolution product images with rich metadata.
+import os
+import json
 
-- **Source**: [Kaggle - Fashion Product Images Dataset](https://www.kaggle.com/datasets/paramaggarwal/fashion-product-images-dataset)
-- **Size**: ~15 GB (images) + CSV metadata
-- **License**: Check Kaggle for current license terms
+# Option A: Upload kaggle.json to /Workspace/Users/<your-email>/ and uncomment:
+# with open('/Workspace/Users/kevin.ippen@databricks.com/kaggle.json', 'r') as f:
+#     kaggle_creds = json.load(f)
+#     os.environ['KAGGLE_USERNAME'] = kaggle_creds['username']
+#     os.environ['KAGGLE_KEY'] = kaggle_creds['key']
 
-### Dataset Structure
+# Option B: Set credentials directly (not recommended for production)
+# os.environ['KAGGLE_USERNAME'] = 'your_username'
+# os.environ['KAGGLE_KEY'] = 'your_api_key'
 
-```
-fashion-product-images/
-├── styles.csv          # Product metadata
-└── images/             # Product images
-    ├── 1163.jpg
-    ├── 1164.jpg
-    └── ...
-```
+# Option C: Use Databricks secrets (recommended)
+try:
+    os.environ['KAGGLE_USERNAME'] = dbutils.secrets.get(scope='kaggle', key='username')
+    os.environ['KAGGLE_KEY'] = dbutils.secrets.get(scope='kaggle', key='api_key')
+    print("✓ Kaggle credentials loaded from secrets")
+except:
+    print("⚠ Kaggle secrets not found. Please configure credentials using Option A or B above.")
 
-### Metadata Schema
+# Step 3: Download dataset from Kaggle
+import kaggle
+from kaggle.api.kaggle_api_extended import KaggleApi
 
-The `styles.csv` file contains the following columns:
+api = KaggleApi()
+api.authenticate()
 
-| Column | Type | Description | Example |
-|--------|------|-------------|---------|
-| `id` | Integer | Unique product ID | 15970 |
-| `gender` | String | Target gender | "Men", "Women", "Boys", "Girls", "Unisex" |
-| `masterCategory` | String | Top-level category | "Apparel", "Accessories", "Footwear" |
-| `subCategory` | String | Sub-category | "Topwear", "Bottomwear", "Watches" |
-| `articleType` | String | Specific article type | "Shirts", "Jeans", "Watches" |
-| `baseColour` | String | Primary color | "Navy Blue", "Black", "White" |
-| `season` | String | Season | "Fall", "Summer", "Winter", "Spring" |
-| `year` | Integer | Year of production | 2011-2017 |
-| `usage` | String | Usage type | "Casual", "Formal", "Sports" |
-| `productDisplayName` | String | Full product name | "Turtle Check Men Navy Blue Shirt" |
+print("Downloading Fashion Product Images dataset...")
+dataset_name = 'paramaggarwal/fashion-product-images-dataset'
+download_path = '/tmp/fashion-data'
 
-### Download Instructions
+api.dataset_download_files(dataset_name, path=download_path, unzip=True)
+print(f"✓ Dataset downloaded to {download_path}")
 
-#### Method 1: Kaggle Website
+# Step 4: Create Unity Catalog structure
+spark.sql("CREATE CATALOG IF NOT EXISTS main")
+spark.sql("CREATE SCHEMA IF NOT EXISTS main.fashion_demo")
+spark.sql("""
+    CREATE VOLUME IF NOT EXISTS main.fashion_demo.raw_data
+""")
+print("✓ Unity Catalog structure created: main.fashion_demo.raw_data")
 
-1. Go to https://www.kaggle.com/datasets/paramaggarwal/fashion-product-images-dataset
-2. Click "Download" (requires Kaggle account)
-3. Extract the ZIP file
-4. You'll have `styles.csv` and an `images/` directory
+# Step 5: Upload CSV to Unity Catalog Volume
+import shutil
 
-#### Method 2: Kaggle API
+volume_path = '/Volumes/main/fashion_demo/raw_data'
+csv_source = f'{download_path}/styles.csv'
+csv_dest = f'{volume_path}/styles.csv'
 
-```bash
-# Install Kaggle CLI
-pip install kaggle
+dbutils.fs.cp(f'file:{csv_source}', csv_dest)
+print(f"✓ CSV uploaded to {csv_dest}")
 
-# Set up Kaggle credentials (~/.kaggle/kaggle.json)
-# Download from: https://www.kaggle.com/settings -> API -> Create New Token
+# Step 6: Upload images to Unity Catalog Volume
+images_source = f'{download_path}/images'
+images_dest = f'{volume_path}/images'
 
-# Download dataset
-kaggle datasets download -d paramaggarwal/fashion-product-images-dataset
+print("Uploading images (this may take several minutes for ~44k images)...")
 
-# Extract
-unzip fashion-product-images-dataset.zip -d fashion-data/
-```
+# Copy images directory
+import os
+from pathlib import Path
 
-### Upload to Databricks
+image_files = list(Path(images_source).glob('*.jpg'))
+print(f"Found {len(image_files)} images to upload")
 
-#### Option A: Databricks UI
+# Create images directory in volume
+dbutils.fs.mkdirs(images_dest)
 
-1. Navigate to Data → Volumes in Databricks UI
-2. Create volume: `main.fashion_demo.raw_data`
-3. Upload `styles.csv` and `images/` folder
+# Upload in batches for better progress tracking
+batch_size = 1000
+for i in range(0, len(image_files), batch_size):
+    batch = image_files[i:i+batch_size]
+    for img_file in batch:
+        src = f'file:{str(img_file)}'
+        dst = f'{images_dest}/{img_file.name}'
+        dbutils.fs.cp(src, dst)
+    print(f"  Uploaded {min(i+batch_size, len(image_files))}/{len(image_files)} images")
 
-#### Option B: Databricks CLI
+print(f"✓ All images uploaded to {images_dest}")
 
-```bash
-# Upload CSV
-databricks fs cp styles.csv dbfs:/Volumes/main/fashion_demo/raw_data/styles.csv
+# Step 7: Verify upload and create Delta table
+print("\n=== Verification ===")
 
-# Upload images (this may take a while)
-databricks fs cp -r images/ dbfs:/Volumes/main/fashion_demo/raw_data/images/
-```
+# Check CSV
+df_styles = spark.read.csv(csv_dest, header=True, inferSchema=True)
+print(f"✓ CSV loaded: {df_styles.count()} products")
+print("\nSample data:")
+display(df_styles.limit(5))
 
-#### Option C: Cloud Storage + External Location
+# Check images
+image_count = len(dbutils.fs.ls(images_dest))
+print(f"✓ Images in volume: {image_count} files")
 
-For large datasets, consider using cloud storage:
+# Create Delta table from CSV
+df_styles.write.format('delta').mode('overwrite').saveAsTable('main.fashion_demo.products_raw')
+print("\n✓ Delta table created: main.fashion_demo.products_raw")
 
-```sql
--- Azure
-CREATE EXTERNAL LOCATION fashion_data_location
-    URL 'abfss://container@storageaccount.dfs.core.windows.net/fashion-data'
-    WITH (STORAGE CREDENTIAL azure_credential);
-
--- Then create volume pointing to external location
-```
-
-### Data Quality Notes
-
-1. **Missing Images**: Some product IDs in CSV may not have corresponding images
-2. **Duplicates**: Some products may have multiple color variants
-3. **Inconsistent Naming**: Category names may have variations in capitalization
-4. **Price Information**: Original dataset doesn't include prices (we generate synthetic prices)
-
-### Preprocessing Steps
-
-The notebook `01_ingest_products.py` handles:
-
-1. Loading CSV with proper schema
-2. Renaming columns to standard format
-3. Generating synthetic prices based on category
-4. Creating image path references
-5. Data quality checks (nulls, duplicates)
-6. Writing to Delta table
-
-### Sample Data
-
-For quick testing without downloading the full dataset, we provide sample data:
-
-```python
-# Generate sample data for testing
-from fashion_visual_search.data_generation import SyntheticDataGenerator
-
-generator = SyntheticDataGenerator(seed=42)
-users = generator.generate_users(num_users=100)
-# ... etc
-```
-
-## Alternative Datasets
-
-If the Kaggle dataset is unavailable, consider:
-
-1. **DeepFashion**: http://mmlab.ie.cuhk.edu.hk/projects/DeepFashion.html
-   - Larger dataset with more annotations
-   - Requires academic access
-
-2. **Fashion-MNIST**: https://github.com/zalandoresearch/fashion-mnist
-   - Smaller, simpler dataset
-   - Good for prototyping
-
-3. **Your Own Data**:
-   - Adapt `01_ingest_products.py` for your schema
-   - Ensure you have: product_id, category, image_path
-
-## Data Storage Best Practices
-
-1. **Use Delta Lake**: All tables stored as Delta for ACID compliance
-2. **Unity Catalog**: Leverage three-level namespace (catalog.schema.table)
-3. **Optimize Tables**: Run OPTIMIZE regularly with Z-ORDER on key columns
-4. **Volume Storage**: Use UC Volumes for image files
-5. **Partitioning**: For very large catalogs, consider partitioning by category
-
-## Privacy & Compliance
-
-- This is public dataset from Kaggle - check license terms
-- For production with real customer data:
-  - Implement data governance policies
-  - Tag PII columns appropriately
-  - Use Unity Catalog access controls
-  - Comply with GDPR/CCPA requirements
-  - Sanitize logs to remove PII
-
-## Data Updates
-
-For production systems:
-
-1. **Incremental Ingestion**: Use Delta MERGE for updates
-2. **Change Data Capture**: Enable Delta CDC if needed
-3. **Vector Index Sync**: Ensure Vector Search index stays in sync
-4. **User Features Refresh**: Schedule regular updates of user style features
-
-```python
-# Example incremental update
-new_products_df = spark.read.csv("new_products.csv")
-
-(spark.table("main.fashion_demo.products")
-    .merge(new_products_df, "product_id")
-    .whenMatchedUpdateAll()
-    .whenNotMatchedInsertAll()
-    .execute())
-
-# Trigger vector index sync
-vsc.get_index(index_name="...").sync()
-```
+print("\n=== Setup Complete ===")
+print(f"CSV location: {csv_dest}")
+print(f"Images location: {images_dest}")
+print(f"Delta table: main.fashion_demo.products_raw")
+print("\nNext steps: Run the preprocessing notebook to clean and enrich the data.")

@@ -1,0 +1,11 @@
+command: ["streamlit", "run", "app.py", "--server.port", "8080", "--server.address", "0.0.0.0"]
+
+env:
+  - name: CATALOG
+    value: "main"
+  - name: SCHEMA  
+    value: "fashion_demo"
+  - name: VECTOR_SEARCH_ENDPOINT
+    value: "fashion_vector_search"
+  - name: CLAUDE_ENDPOINT
+    value: "databricks-claude-sonnet-4-5"

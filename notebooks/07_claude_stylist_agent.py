@@ -473,6 +473,10 @@ def stylist_agent(user_message: str, max_turns: int = 5) -> str:
 
 # COMMAND ----------
 
+
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Test the Agent
 

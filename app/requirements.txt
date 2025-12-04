@@ -1,0 +1,7 @@
+streamlit>=1.28.0
+numpy>=1.24.0
+pandas>=2.0.0
+databricks-sdk>=0.12.0
+databricks-vectorsearch>=0.22
+databricks-sql-connector>=2.9.0
+Pillow>=10.0.0

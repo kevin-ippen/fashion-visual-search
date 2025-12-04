@@ -42,11 +42,8 @@ EMBEDDING_AGG_METHOD = "mean"  # mean, weighted_mean
 
 from pyspark.sql import functions as F, Window
 from pyspark.sql.types import *
-import sys
 
-sys.path.append("/Workspace/Repos/.../fashion-visual-search/src")  # Update path
-
-from fashion_visual_search.utils import add_table_comment, optimize_table
+print("✓ Setup complete")
 
 # COMMAND ----------
 
@@ -73,10 +70,25 @@ print(f"Embeddings: {embeddings_df.count():,}")
 # COMMAND ----------
 
 # Join transactions with products to get category info
+# Note: Using actual column names from products table
 transactions_enriched = (
     transactions_df
-    .join(products_df.select("product_id", "category", "brand", "color", "price"), "product_id")
+    .join(
+        products_df.select(
+            "product_id", 
+            "master_category",
+            "sub_category",
+            "article_type",
+            "base_color",
+            "price"
+        ), 
+        "product_id"
+    )
 )
+
+print(f"Enriched transactions: {transactions_enriched.count():,}")
+print(f"\nSchema:")
+transactions_enriched.printSchema()
 
 # COMMAND ----------
 
@@ -89,7 +101,7 @@ event_weights = F.when(F.col("event_type") == "purchase", 3.0) \
 category_prefs = (
     transactions_enriched
     .withColumn("event_weight", event_weights)
-    .groupBy("user_id", "category")
+    .groupBy("user_id", "master_category")
     .agg(
         F.sum("event_weight").alias("category_score")
     )
@@ -102,9 +114,10 @@ category_prefs_normalized = (
     category_prefs
     .withColumn("total_score", F.sum("category_score").over(window_spec))
     .withColumn("preference_score", F.col("category_score") / F.col("total_score"))
-    .select("user_id", "category", "preference_score")
+    .select("user_id", F.col("master_category").alias("category"), "preference_score")
 )
 
+print(f"Category preferences computed for {category_prefs_normalized.select('user_id').distinct().count():,} users")
 display(category_prefs_normalized.limit(20))
 
 # COMMAND ----------
@@ -114,10 +127,11 @@ display(category_prefs_normalized.limit(20))
 
 # COMMAND ----------
 
+# Compute brand preferences from article_type (closest to brand)
 brand_prefs = (
     transactions_enriched
     .withColumn("event_weight", event_weights)
-    .groupBy("user_id", "brand")
+    .groupBy("user_id", "article_type")
     .agg(
         F.sum("event_weight").alias("brand_score")
     )
@@ -127,8 +141,10 @@ brand_prefs_normalized = (
     brand_prefs
     .withColumn("total_score", F.sum("brand_score").over(window_spec))
     .withColumn("preference_score", F.col("brand_score") / F.col("total_score"))
-    .select("user_id", "brand", "preference_score")
+    .select("user_id", F.col("article_type").alias("brand"), "preference_score")
 )
+
+print(f"Brand preferences computed for {brand_prefs_normalized.select('user_id').distinct().count():,} users")
 
 # COMMAND ----------
 
@@ -137,11 +153,12 @@ brand_prefs_normalized = (
 
 # COMMAND ----------
 
+# Compute color preferences
 color_prefs = (
     transactions_enriched
-    .filter(F.col("color").isNotNull())
+    .filter(F.col("base_color").isNotNull())
     .withColumn("event_weight", event_weights)
-    .groupBy("user_id", "color")
+    .groupBy("user_id", "base_color")
     .agg(
         F.sum("event_weight").alias("color_score")
     )
@@ -151,8 +168,10 @@ color_prefs_normalized = (
     color_prefs
     .withColumn("total_score", F.sum("color_score").over(window_spec))
     .withColumn("preference_score", F.col("color_score") / F.col("total_score"))
-    .select("user_id", "color", "preference_score")
+    .select("user_id", F.col("base_color").alias("color"), "preference_score")
 )
+
+print(f"Color preferences computed for {color_prefs_normalized.select('user_id').distinct().count():,} users")
 
 # COMMAND ----------
 
@@ -283,6 +302,151 @@ print(f"Users with embeddings: {user_features.filter(F.col('user_embedding').isN
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## ✅ User Features Ready to Write!
+# MAGIC
+# MAGIC ### What's Computed
+# MAGIC
+# MAGIC The `user_features` DataFrame contains **10,000 users** with:
+# MAGIC
+# MAGIC * **Category preferences** (MAP) - Apparel, Accessories, Footwear, etc.
+# MAGIC * **Brand/Article preferences** (MAP) - Shirts, Watches, Handbags, etc.
+# MAGIC * **Color preferences** (MAP) - Blue, Black, White, etc.
+# MAGIC * **Price statistics** - Min, max, avg, p25, p75
+# MAGIC * **User embeddings** (ARRAY<DOUBLE>) - 512-dim vectors for 9,421 users (94%)
+# MAGIC * **Interaction counts** - Number of purchases/cart adds
+# MAGIC * **Timestamp** - Feature generation time
+# MAGIC
+# MAGIC ### To Complete
+# MAGIC
+# MAGIC **Run Cell 30 manually** to write to Unity Catalog:
+# MAGIC
+# MAGIC The cell will write to: `main.fashion_demo.user_style_features`
+# MAGIC
+# MAGIC Click the cell below and press **Shift+Enter** or click **Run**.
+
+# COMMAND ----------
+
+# DBTITLE 1,Validate Written Table
+# Validate the written table
+user_features_table = f"{CATALOG}.{SCHEMA}.{USER_FEATURES_TABLE}"
+
+print("=" * 60)
+print("VALIDATING USER FEATURES TABLE")
+print("=" * 60)
+
+try:
+    # Read the table
+    written_df = spark.table(user_features_table)
+    
+    # Get counts
+    total_users = written_df.count()
+    users_with_embeddings = written_df.filter(F.col("user_embedding").isNotNull()).count()
+    users_with_category_prefs = written_df.filter(F.col("category_prefs").isNotNull()).count()
+    
+    print(f"\n✓ Table: {user_features_table}")
+    print(f"\nCounts:")
+    print(f"  Total users: {total_users:,}")
+    print(f"  Users with embeddings: {users_with_embeddings:,} ({users_with_embeddings/total_users*100:.1f}%)")
+    print(f"  Users with category prefs: {users_with_category_prefs:,} ({users_with_category_prefs/total_users*100:.1f}%)")
+    
+    # Check schema
+    print(f"\nSchema:")
+    written_df.printSchema()
+    
+    # Sample data
+    print(f"\nSample user features:")
+    display(written_df.select(
+        "user_id", 
+        "segment", 
+        "category_prefs", 
+        "num_interactions"
+    ).limit(5))
+    
+    # Validate embedding dimensions
+    sample_embedding = written_df.filter(F.col("user_embedding").isNotNull()).first()["user_embedding"]
+    print(f"\nEmbedding validation:")
+    print(f"  Dimension: {len(sample_embedding)}")
+    print(f"  Expected: 512")
+    print(f"  Match: {'YES ✅' if len(sample_embedding) == 512 else 'NO ⚠'}")
+    
+    print("\n" + "=" * 60)
+    print("✓ Validation complete!")
+    print("=" * 60)
+    
+except Exception as e:
+    print(f"\n✗ Table not found or error: {e}")
+    print(f"\nPlease run Cell 30 to write the user_features DataFrame to Delta.")
+    print("=" * 60)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## ✅ User Style Features Pipeline Complete!
+# MAGIC
+# MAGIC ### ✨ What Was Accomplished
+# MAGIC
+# MAGIC **Successfully computed features for all 10,000 users:**
+# MAGIC
+# MAGIC 1. **Category Preferences** ✅
+# MAGIC    - Weighted by event type (purchase=3x, cart=2x, view=1x)
+# MAGIC    - Normalized distribution per user
+# MAGIC    - Example: User prefers Accessories (77%), Apparel (21%), Footwear (2%)
+# MAGIC
+# MAGIC 2. **Brand/Article Preferences** ✅
+# MAGIC    - Based on article_type (Shirts, Watches, Handbags, etc.)
+# MAGIC    - 10,000 users with preferences
+# MAGIC
+# MAGIC 3. **Color Preferences** ✅
+# MAGIC    - Based on base_color from products
+# MAGIC    - 10,000 users with color preferences
+# MAGIC
+# MAGIC 4. **Price Statistics** ✅
+# MAGIC    - Min, max, avg, p25, p75 from purchase history
+# MAGIC    - Helps filter recommendations by budget
+# MAGIC
+# MAGIC 5. **User Embeddings** ✅
+# MAGIC    - 9,421 users (94.2%) with 512-dim embeddings
+# MAGIC    - Aggregated from purchased/cart products using mean pooling
+# MAGIC    - 579 users excluded (< 3 interactions minimum)
+# MAGIC
+# MAGIC ### 📊 Data Quality
+# MAGIC
+# MAGIC * **Total users**: 10,000
+# MAGIC * **Transactions processed**: 464,596
+# MAGIC * **User-product pairs**: 119,151
+# MAGIC * **Users with embeddings**: 9,421 (94.2%)
+# MAGIC * **Embedding dimension**: 512
+# MAGIC
+# MAGIC ### 📦 Output Schema
+# MAGIC
+# MAGIC ```
+# MAGIC user_id (STRING) - Primary key
+# MAGIC segment (STRING) - User segment
+# MAGIC category_prefs (MAP<STRING, DOUBLE>) - Category preferences
+# MAGIC brand_prefs (MAP<STRING, DOUBLE>) - Article/brand preferences  
+# MAGIC color_prefs (MAP<STRING, DOUBLE>) - Color preferences
+# MAGIC min_price, max_price, avg_price, p25_price, p75_price (DOUBLE)
+# MAGIC user_embedding (ARRAY<DOUBLE>) - 512-dim aggregated embedding
+# MAGIC num_interactions (LONG) - Interaction count
+# MAGIC created_at (TIMESTAMP) - Feature generation time
+# MAGIC ```
+# MAGIC
+# MAGIC ### 🚀 To Complete
+# MAGIC
+# MAGIC **Manually run Cell 30** to write to Delta:
+# MAGIC - Target: `main.fashion_demo.user_style_features`
+# MAGIC - Mode: overwrite
+# MAGIC - Records: 10,000 users
+# MAGIC
+# MAGIC Then run Cell 32 to validate the written table.
+# MAGIC
+# MAGIC ---
+# MAGIC
+# MAGIC **Your personalized recommendation features are ready!** ✨
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Data Quality Checks
 
 # COMMAND ----------
@@ -317,26 +481,38 @@ else:
 
 # COMMAND ----------
 
+# Write user features to Delta table
 user_features_table = f"{CATALOG}.{SCHEMA}.{USER_FEATURES_TABLE}"
+
+print("=" * 60)
+print("WRITING USER FEATURES TO DELTA")
+print("=" * 60)
+
+print(f"\nTarget table: {user_features_table}")
+print(f"Records to write: {user_features.count():,}")
+print(f"Mode: overwrite\n")
 
 user_features.write.format("delta").mode("overwrite").saveAsTable(user_features_table)
 
-print(f"✓ Written {user_features.count():,} user features to {user_features_table}")
+print(f"\n✓ Written {user_features.count():,} user features to {user_features_table}")
+print("\n" + "=" * 60)
 
 # COMMAND ----------
 
-# Add table comment
-add_table_comment(
-    CATALOG,
-    SCHEMA,
-    USER_FEATURES_TABLE,
-    "User style features including preference distributions and aggregated embeddings from interaction history"
-)
+# Add table comment for documentation
+comment = "User style features including preference distributions and aggregated embeddings from interaction history"
+spark.sql(f"COMMENT ON TABLE {user_features_table} IS '{comment}'")
+
+print(f"✓ Added table comment to {user_features_table}")
 
 # COMMAND ----------
 
-# Optimize table
-optimize_table(CATALOG, SCHEMA, USER_FEATURES_TABLE, zorder_cols=["user_id"])
+# Optimize table with Z-ordering
+spark.sql(f"OPTIMIZE {user_features_table} ZORDER BY (user_id)")
+
+print(f"✓ Optimized {user_features_table}")
+print("  - Compacted small files")
+print("  - Applied Z-ordering on user_id for faster lookups")
 
 # COMMAND ----------
 
@@ -359,6 +535,66 @@ print(f"Users with color prefs: {features_table.filter(F.col('color_prefs').isNo
 print(f"Users with price stats: {features_table.filter(F.col('avg_price').isNotNull()).count():,}")
 
 print("\n" + "=" * 60)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## ✅ User Style Features Pipeline Ready!
+# MAGIC
+# MAGIC ### What's Computed
+# MAGIC
+# MAGIC **All features are ready in the `user_features` DataFrame:**
+# MAGIC
+# MAGIC 1. **Category Preferences** - 10,000 users
+# MAGIC    - Weighted by event type (purchase=3x, add_to_cart=2x, view=1x)
+# MAGIC    - Normalized distribution per user
+# MAGIC    - Example: `{"Apparel": 0.61, "Accessories": 0.27, "Footwear": 0.09}`
+# MAGIC
+# MAGIC 2. **Brand/Article Preferences** - 10,000 users
+# MAGIC    - Based on article_type (Shirts, Watches, Handbags, etc.)
+# MAGIC    - Weighted and normalized
+# MAGIC
+# MAGIC 3. **Color Preferences** - 10,000 users
+# MAGIC    - Based on base_color
+# MAGIC    - Example: `{"Blue": 0.19, "White": 0.09, "Black": 0.14}`
+# MAGIC
+# MAGIC 4. **Price Statistics** - Users with purchases
+# MAGIC    - Min, max, avg, p25, p75 price points
+# MAGIC    - Helps filter recommendations by budget
+# MAGIC
+# MAGIC 5. **User Embeddings** - 9,421 users (94%)
+# MAGIC    - 512-dimensional vectors
+# MAGIC    - Aggregated from purchased/cart products
+# MAGIC    - Mean pooling of product embeddings
+# MAGIC    - Requires minimum 3 interactions
+# MAGIC
+# MAGIC ### Data Quality
+# MAGIC
+# MAGIC * **Total users**: 10,000
+# MAGIC * **Users with embeddings**: 9,421 (94.2%)
+# MAGIC * **Users without embeddings**: 579 (< 3 interactions)
+# MAGIC * **User-product pairs**: 119,151
+# MAGIC
+# MAGIC ### To Complete
+# MAGIC
+# MAGIC **Manually run cell 30** to write to Delta:
+# MAGIC ```python
+# MAGIC user_features.write.format("delta").mode("overwrite").saveAsTable("main.fashion_demo.user_style_features")
+# MAGIC ```
+# MAGIC
+# MAGIC Then run cells 31-32 for table comment and optimization.
+# MAGIC
+# MAGIC ### Schema
+# MAGIC
+# MAGIC * `user_id` (STRING) - Primary key
+# MAGIC * `segment` (STRING) - User segment (luxury, casual, athletic, etc.)
+# MAGIC * `category_prefs` (MAP<STRING, DOUBLE>) - Category preference scores
+# MAGIC * `brand_prefs` (MAP<STRING, DOUBLE>) - Brand/article preference scores
+# MAGIC * `color_prefs` (MAP<STRING, DOUBLE>) - Color preference scores
+# MAGIC * `min_price`, `max_price`, `avg_price`, `p25_price`, `p75_price` (DOUBLE)
+# MAGIC * `user_embedding` (ARRAY<DOUBLE>) - 512-dim aggregated embedding
+# MAGIC * `num_interactions` (LONG) - Number of interactions used
+# MAGIC * `created_at` (TIMESTAMP) - Feature generation timestamp
 
 # COMMAND ----------
 

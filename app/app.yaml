@@ -1,0 +1,38 @@
+# Databricks App Configuration
+# User-level authorization - Databricks handles all permissions automatically
+
+name: fashion-boutique
+description: AI-Powered Fashion Shopping Experience with Vector Search and Claude
+
+# App configuration
+resources:
+  - name: fashion-app
+    description: Fashion e-commerce app with AI-powered search
+    config:
+      streamlit:
+        file: app.py
+        
+# Environment variables
+env:
+  - name: SQL_WAREHOUSE_ID
+    value: "REPLACE_WITH_YOUR_WAREHOUSE_ID"  # Get from SQL Warehouse's HTTP Path
+
+# User-level authorization enabled
+# Databricks automatically handles:
+# - User authentication
+# - SQL Warehouse permissions
+# - Vector Search access
+# - Model serving endpoints
+# No tokens or secrets needed!
+
+# Compute resources (optional)
+compute:
+  size: "SMALL"  # Options: SMALL, MEDIUM, LARGE
+
+# Required resources that users need access to:
+# 1. SQL Warehouse (ID specified above)
+# 2. Tables: main.fashion_demo.products, product_image_embeddings, user_style_features
+# 3. Vector Search endpoint: fashion_vector_search
+# 4. Model endpoint: databricks-claude-sonnet-4-5
+#
+# Users will inherit permissions based on their workspace access

@@ -418,14 +418,14 @@ with tab1:
     
     with col1:
         product_names = filtered_products["product_display_name"].tolist()[:500]
-        
+
         if not product_names:
             st.warning("No products match your filters.")
             st.stop()
-        
+
         if 'selected_product_index' not in st.session_state:
             st.session_state.selected_product_index = 0
-        
+
         selected_product_name = st.selectbox(
             "Choose a product",
             product_names,
@@ -433,6 +433,10 @@ with tab1:
             label_visibility="collapsed",
             key=f"product_select_{st.session_state.random_seed}"
         )
+
+        # Fallback to first product if selectbox returns invalid value
+        if not selected_product_name or selected_product_name not in product_names:
+            selected_product_name = product_names[0]
     
     with col2:
         search_button = st.button("🔍 Find Similar Styles", type="primary", use_container_width=True)
@@ -445,16 +449,22 @@ with tab1:
     
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Get selected product with safety check
-    selected_product_df = filtered_products[
-        filtered_products["product_display_name"] == selected_product_name
-    ]
+    # Get selected product with comprehensive safety checks
+    try:
+        selected_product_df = filtered_products[
+            filtered_products["product_display_name"] == selected_product_name
+        ]
 
-    if selected_product_df.empty:
-        st.warning("Selected product not found. Please choose another product.")
+        if selected_product_df.empty:
+            # Fallback to first product
+            selected_product = filtered_products.iloc[0]
+        else:
+            selected_product = selected_product_df.iloc[0]
+
+    except (IndexError, KeyError) as e:
+        st.error(f"Error selecting product: {e}")
+        st.info("Please refresh the page or adjust your filters.")
         st.stop()
-
-    selected_product = selected_product_df.iloc[0]
 
     # Display selected product
     st.markdown("### 📌 Your Selection")

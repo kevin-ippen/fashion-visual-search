@@ -4,8 +4,8 @@ env:
   - name: CATALOG
     value: "main"
   - name: 'SQL_WAREHOUSE_ID'
-    value: 'http://adb-984752964297111.11.azuredatabricks.net/sql/1.0/warehouses/148ccb90800933a1'
-  - name: SCHEMA  
+    value: '148ccb90800933a1'
+  - name: SCHEMA
     value: "fashion_demo"
   - name: VECTOR_SEARCH_ENDPOINT
     value: "fashion_vector_search"

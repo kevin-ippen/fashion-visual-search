@@ -2,6 +2,7 @@ import streamlit as st
 import numpy as np
 from databricks.vector_search.client import VectorSearchClient
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.core import Config, oauth_service_principal
 from databricks.sql import connect
 import pandas as pd
 from PIL import Image
@@ -10,6 +11,8 @@ from typing import List, Dict, Optional
 from dataclasses import dataclass
 import random
 import os
+import io
+import requests
 
 # Configuration - read from environment or use defaults
 CATALOG = os.getenv("CATALOG", "main")
@@ -20,10 +23,6 @@ CLAUDE_ENDPOINT = os.getenv("CLAUDE_ENDPOINT", "databricks-claude-sonnet-4-5")
 
 # SQL Warehouse ID - configured in app settings
 SQL_WAREHOUSE_ID = os.getenv("SQL_WAREHOUSE_ID")
-
-# Secret scope configuration for authentication
-SECRET_SCOPE = "redditscope"
-SECRET_KEY = "redditkey"
 
 # Page config
 st.set_page_config(
@@ -88,68 +87,70 @@ st.markdown("""
         border-radius: 8px;
         margin-bottom: 20px;
     }
+    .product-image {
+        border-radius: 8px;
+        object-fit: cover;
+        width: 100%;
+        height: 180px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize clients - using default user authentication
+# Initialize clients - using app service principal authentication
 @st.cache_resource
 def get_workspace_client():
-    """Initialize Workspace client with user auth."""
+    """Initialize Workspace client with app service principal auth."""
     return WorkspaceClient()
 
 @st.cache_resource
 def get_vector_search_client():
-    """Initialize Vector Search client with service principal auth from secrets."""
+    """Initialize Vector Search client with app service principal auth."""
     try:
-        # Get workspace client first
         w = get_workspace_client()
-
-        # Retrieve PAT from Databricks secrets
-        pat_token = w.secrets.get_secret(scope=SECRET_SCOPE, key=SECRET_KEY).value
-
-        # Initialize VectorSearchClient with workspace URL and PAT from secrets
+        
+        # Use app's service principal credentials from environment
+        client_id = os.getenv('DATABRICKS_CLIENT_ID')
+        client_secret = os.getenv('DATABRICKS_CLIENT_SECRET')
+        
         return VectorSearchClient(
             workspace_url=w.config.host,
-            personal_access_token=pat_token,
+            service_principal_client_id=client_id,
+            service_principal_client_secret=client_secret,
             disable_notice=True
         )
     except Exception as e:
         st.error(f"Failed to initialize Vector Search client: {e}")
-        st.info(f"Ensure the secret '{SECRET_KEY}' exists in scope '{SECRET_SCOPE}'")
+        st.info("Ensure the app's service principal has access to Vector Search endpoint.")
         return None
 
 @st.cache_resource
 def get_sql_connection():
-    """Create SQL Warehouse connection using PAT from secrets."""
+    """Create SQL Warehouse connection using app service principal credentials."""
     if not SQL_WAREHOUSE_ID:
         st.error("⚠️ SQL_WAREHOUSE_ID not configured. Please set it in app configuration.")
         return None
 
     try:
-        # Get workspace client for configuration
         w = get_workspace_client()
-
+        
         # Get connection details
         server_hostname = w.config.host.replace("https://", "").replace("http://", "")
         http_path = f"/sql/1.0/warehouses/{SQL_WAREHOUSE_ID}"
 
-        # Debug info (remove after fixing)
-        st.info(f"🔍 Connecting to: {server_hostname}")
-        st.info(f"🔍 HTTP Path: {http_path}")
+        # Create credentials provider using OAuth service principal
+        def credential_provider():
+            config = Config(
+                host=w.config.host,
+                client_id=os.getenv("DATABRICKS_CLIENT_ID"),
+                client_secret=os.getenv("DATABRICKS_CLIENT_SECRET")
+            )
+            return oauth_service_principal(config)
 
-        # Use PAT from secrets for authentication
-        try:
-            pat_token = w.secrets.get_secret(scope=SECRET_SCOPE, key=SECRET_KEY).value
-            st.success(f"✅ Retrieved PAT from {SECRET_SCOPE}/{SECRET_KEY}")
-        except Exception as secret_error:
-            st.error(f"❌ Failed to retrieve secret: {secret_error}")
-            return None
-
-        # Connect to SQL Warehouse with PAT authentication
+        # Connect using app's service principal credentials
         conn = connect(
             server_hostname=server_hostname,
             http_path=http_path,
-            access_token=pat_token
+            credentials_provider=credential_provider
         )
 
         st.success("✅ SQL Warehouse connection established")
@@ -159,8 +160,9 @@ def get_sql_connection():
         st.error(f"❌ Failed to connect to SQL Warehouse: {type(e).__name__}: {str(e)}")
         st.info("**Troubleshooting:**")
         st.info("1. Verify SQL Warehouse ID is correct and warehouse is running")
-        st.info("2. Check that the PAT in secrets has 'Can Use' permission on the SQL Warehouse")
-        st.info("3. Ensure the PAT has SELECT permissions on the tables")
+        st.info("2. Grant the app's service principal 'CAN USE' permission on the SQL Warehouse")
+        st.info("3. Ensure the service principal has SELECT permissions on the tables")
+        st.info("4. Check the app's Authorization tab for the service principal ID")
         import traceback
         st.code(traceback.format_exc())
         return None
@@ -170,10 +172,10 @@ w = get_workspace_client()
 vsc = get_vector_search_client()
 sql_conn = get_sql_connection()
 
-# Load data using SQL Warehouse with user permissions
+# Load data using SQL Warehouse with app service principal permissions
 @st.cache_data(ttl=300)  # Cache for 5 minutes
 def load_products():
-    """Load products using SQL Warehouse connection with user auth."""
+    """Load products using SQL Warehouse connection with app service principal auth."""
     if sql_conn is None:
         return pd.DataFrame(columns=[
             'product_id', 'product_display_name', 'master_category', 
@@ -190,7 +192,7 @@ def load_products():
         return pd.DataFrame(rows, columns=columns)
     except Exception as e:
         st.error(f"Error loading products: {e}")
-        st.info("Ensure you have SELECT permission on the products table.")
+        st.info("Ensure the app's service principal has SELECT permission on the products table.")
         return pd.DataFrame(columns=[
             'product_id', 'product_display_name', 'master_category', 
             'base_color', 'price', 'article_type', 'image_path'
@@ -198,7 +200,7 @@ def load_products():
 
 @st.cache_data(ttl=300)
 def load_embeddings():
-    """Load embeddings using SQL Warehouse connection with user auth."""
+    """Load embeddings using SQL Warehouse connection with app service principal auth."""
     if sql_conn is None:
         return pd.DataFrame(columns=['product_id', 'image_embedding'])
     
@@ -212,12 +214,12 @@ def load_embeddings():
         return pd.DataFrame(rows, columns=columns)
     except Exception as e:
         st.error(f"Error loading embeddings: {e}")
-        st.info("Ensure you have SELECT permission on the embeddings table.")
+        st.info("Ensure the app's service principal has SELECT permission on the embeddings table.")
         return pd.DataFrame(columns=['product_id', 'image_embedding'])
 
 @st.cache_data(ttl=300)
 def load_user_features():
-    """Load user features using SQL Warehouse connection with user auth."""
+    """Load user features using SQL Warehouse connection with app service principal auth."""
     if sql_conn is None:
         return pd.DataFrame(columns=['user_id', 'segment', 'category_prefs'])
     
@@ -240,7 +242,7 @@ try:
     user_features_pd = load_user_features()
     
     if products_pd.empty:
-        st.warning("⚠️ No product data loaded. Please check your permissions and SQL Warehouse configuration.")
+        st.warning("⚠️ No product data loaded. Please check permissions and SQL Warehouse configuration.")
 except Exception as e:
     st.error(f"Error initializing data: {e}")
     products_pd = pd.DataFrame()
@@ -272,6 +274,37 @@ def get_embedding_vector(embedding):
     elif hasattr(embedding, 'tolist'):
         return np.array(embedding.tolist() if callable(embedding.tolist) else embedding)
     return None
+
+# Helper function to display product image
+def display_product_image(image_path, category="", width=None, use_column_width=True):
+    """Display product image with fallback to emoji if image fails to load."""
+    category_emoji = {
+        "Apparel": "👕",
+        "Footwear": "👟",
+        "Accessories": "👜",
+        "Personal Care": "💄"
+    }
+    emoji = category_emoji.get(category, "🛍️")
+    
+    if image_path and pd.notna(image_path):
+        try:
+            # Try to display the image
+            st.image(image_path, use_column_width=use_column_width, width=width)
+            return True
+        except Exception as e:
+            # Fallback to emoji if image fails
+            st.markdown(f"<div style='background: #f5f5f5; height: 180px; "
+                       f"border-radius: 8px; display: flex; align-items: center; "
+                       f"justify-content: center; font-size: 64px;'>{emoji}</div>", 
+                       unsafe_allow_html=True)
+            return False
+    else:
+        # No image path, show emoji
+        st.markdown(f"<div style='background: #f5f5f5; height: 180px; "
+                   f"border-radius: 8px; display: flex; align-items: center; "
+                   f"justify-content: center; font-size: 64px;'>{emoji}</div>", 
+                   unsafe_allow_html=True)
+        return False
 
 # Helper functions
 def search_similar_products(product_id: int, num_results: int = 12, budget: float = None):
@@ -341,7 +374,7 @@ def search_similar_products(product_id: int, num_results: int = 12, budget: floa
     
     except Exception as e:
         st.error(f"Error searching for similar products: {str(e)}")
-        st.info("Ensure you have access to the Vector Search endpoint.")
+        st.info("Ensure the app's service principal has access to the Vector Search endpoint.")
         return []
 
 # Header
@@ -359,11 +392,17 @@ if products_pd.empty:
     **Please verify:**
     1. SQL_WAREHOUSE_ID is configured in app settings
     2. The SQL Warehouse is running
-    3. You have SELECT permissions on:
+    3. The app's service principal has 'CAN USE' permission on the SQL Warehouse
+    4. The app's service principal has SELECT permissions on:
        - `{CATALOG}.{SCHEMA}.products`
        - `{CATALOG}.{SCHEMA}.product_image_embeddings`
        - `{CATALOG}.{SCHEMA}.user_style_features` (optional)
-    4. The tables exist and contain data
+    5. The tables exist and contain data
+    
+    **To grant permissions:**
+    - Go to SQL Warehouses → Select your warehouse → Permissions tab
+    - Add the app's service principal (find ID in app's Authorization tab)
+    - Grant 'CAN USE' permission
     """.format(CATALOG=CATALOG, SCHEMA=SCHEMA))
     st.stop()
 
@@ -494,10 +533,11 @@ with tab1:
     col_a, col_b = st.columns([1, 3])
     
     with col_a:
-        st.markdown(f"<div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); "
-                   f"height: 200px; border-radius: 8px; display: flex; align-items: center; "
-                   f"justify-content: center; color: white; font-size: 48px;'>👔</div>", 
-                   unsafe_allow_html=True)
+        display_product_image(
+            selected_product.get('image_path'),
+            selected_product['master_category'],
+            use_column_width=True
+        )
     
     with col_b:
         st.markdown(f"### {selected_product['product_display_name']}")
@@ -537,18 +577,12 @@ with tab1:
                         with col:
                             st.markdown(f"<div class='product-card'>", unsafe_allow_html=True)
                             
-                            category_emoji = {
-                                "Apparel": "👕",
-                                "Footwear": "👟",
-                                "Accessories": "👜",
-                                "Personal Care": "💄"
-                            }
-                            emoji = category_emoji.get(product['category'], "🛍️")
-                            
-                            st.markdown(f"<div style='background: #f5f5f5; height: 180px; "
-                                       f"border-radius: 8px; display: flex; align-items: center; "
-                                       f"justify-content: center; font-size: 64px; margin-bottom: 12px;'>"
-                                       f"{emoji}</div>", unsafe_allow_html=True)
+                            # Display product image
+                            display_product_image(
+                                product.get('image_path'),
+                                product['category'],
+                                use_column_width=True
+                            )
                             
                             st.markdown(f"<div class='product-name'>{product['name'][:50]}...</div>", 
                                        unsafe_allow_html=True)
@@ -598,7 +632,7 @@ with tab2:
                         role = ChatMessageRole.USER if msg["role"] == "user" else ChatMessageRole.ASSISTANT
                         chat_messages.append(ChatMessage(role=role, content=msg["content"]))
                     
-                    # Use user's permissions to call Claude
+                    # Use app's service principal to call Claude
                     response = w.serving_endpoints.query(
                         name=CLAUDE_ENDPOINT,
                         messages=chat_messages,
@@ -617,7 +651,7 @@ with tab2:
                 except Exception as e:
                     error_msg = f"I apologize, but I encountered an error: {str(e)}"
                     st.error(error_msg)
-                    st.info("Ensure you have access to the Claude endpoint.")
+                    st.info("Ensure the app's service principal has access to the Claude endpoint.")
                     st.session_state.chat_messages.append({
                         "role": "assistant", 
                         "content": error_msg

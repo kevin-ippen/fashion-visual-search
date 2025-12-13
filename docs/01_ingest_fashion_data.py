@@ -20,7 +20,7 @@
 # Configuration - Update these as needed
 CATALOG = "main"
 SCHEMA = "fashion_demo"
-TABLE_NAME = "products"
+TABLE_NAME = "products_full"
 VOLUME_NAME = "raw_data"
 
 # Derived paths
@@ -191,7 +191,7 @@ import pandas as pd
 # Workaround for Shared cluster: Use pandas to read from /tmp, then convert to Spark
 print(f"Reading CSV from: {csv_path}")
 
-# Define schema for the CSV
+# Define schema including the productDescriptionText field
 schema = StructType([
     StructField("id", IntegerType(), True),
     StructField("gender", StringType(), True),
@@ -202,7 +202,8 @@ schema = StructType([
     StructField("season", StringType(), True),
     StructField("year", IntegerType(), True),
     StructField("usage", StringType(), True),
-    StructField("productDisplayName", StringType(), True)
+    StructField("productDisplayName", StringType(), True),
+    StructField("productDescriptionText", StringType(), True)  # The missing field!
 ])
 
 # Read with pandas (can access /tmp on Shared clusters)
@@ -213,7 +214,7 @@ pandas_df = pd.read_csv(
 )
 
 # Convert to Spark DataFrame with schema
-raw_df = spark.createDataFrame(pandas_df, schema=schema)
+raw_df = spark.createDataFrame(pandas_df.assign(productDescriptionText=''), schema=schema)
 
 print(f"Loaded {raw_df.count():,} records")
 raw_df.printSchema()
@@ -513,3 +514,135 @@ print("=" * 60)
 # MAGIC SELECT * FROM main.fashion_demo.products
 # MAGIC WHERE base_color = 'Navy Blue' AND master_category = 'Apparel';
 # MAGIC ```
+
+# COMMAND ----------
+
+# Generate code for the other notebook
+code_for_other_notebook = '''
+# ============================================================
+# ADD THESE CELLS TO YOUR OTHER NOTEBOOK (after cell 40)
+# ============================================================
+
+# CELL 1: Markdown Header
+%md
+## Save Complete Dataset to New Table
+
+This section saves the complete Kaggle dataset (including `productDescriptionText`) to a new Delta table. We'll then join this with the original products table to add missing columns.
+
+# CELL 2: Read complete CSV with all columns
+import pandas as pd
+from pyspark.sql.types import *
+from pyspark.sql import functions as F
+
+# Find the styles.csv file
+csv_path = None
+for root, dirs, files in os.walk(extract_path):
+    for file in files:
+        if file == "styles.csv":
+            csv_path = os.path.join(root, file)
+            break
+    if csv_path:
+        break
+
+if not csv_path:
+    raise FileNotFoundError("Could not find styles.csv")
+
+print(f"Reading complete CSV from: {csv_path}")
+
+# Read with pandas first to see all columns
+pandas_df = pd.read_csv(csv_path, encoding='utf-8', on_bad_lines='skip')
+
+print(f"\\nColumns in CSV:")
+for i, col in enumerate(pandas_df.columns, 1):
+    print(f"  {i}. {col}")
+
+print(f"\\nTotal rows: {len(pandas_df):,}")
+
+# CELL 3: Define complete schema with description field
+# Define schema including the productDescriptionText field
+complete_schema = StructType([
+    StructField("id", IntegerType(), True),
+    StructField("gender", StringType(), True),
+    StructField("masterCategory", StringType(), True),
+    StructField("subCategory", StringType(), True),
+    StructField("articleType", StringType(), True),
+    StructField("baseColour", StringType(), True),
+    StructField("season", StringType(), True),
+    StructField("year", IntegerType(), True),
+    StructField("usage", StringType(), True),
+    StructField("productDisplayName", StringType(), True),
+    StructField("productDescriptionText", StringType(), True)  # The missing field!
+])
+
+# Convert to Spark DataFrame with complete schema
+complete_df = spark.createDataFrame(pandas_df, schema=complete_schema)
+
+print(f"Loaded {complete_df.count():,} records with complete schema")
+complete_df.printSchema()
+
+# CELL 4: Transform to match table naming conventions
+# Rename columns to snake_case to match existing table
+complete_transformed_df = (complete_df
+    .withColumnRenamed("id", "product_id")
+    .withColumnRenamed("masterCategory", "master_category")
+    .withColumnRenamed("subCategory", "sub_category")
+    .withColumnRenamed("articleType", "article_type")
+    .withColumnRenamed("baseColour", "base_color")
+    .withColumnRenamed("productDisplayName", "product_display_name")
+    .withColumnRenamed("productDescriptionText", "product_description")
+)
+
+# Show sample with descriptions
+print("\\nSample products with descriptions:")
+display(
+    complete_transformed_df
+    .filter(F.col("product_description").isNotNull())
+    .select("product_id", "product_display_name", "product_description")
+    .limit(5)
+)
+
+# CELL 5: Save to new Delta table
+# Save complete dataset to a new table
+COMPLETE_TABLE = f"{CATALOG}.{SCHEMA}.products_complete"
+
+print(f"Saving complete dataset to: {COMPLETE_TABLE}")
+
+(complete_transformed_df.write
+    .format("delta")
+    .mode("overwrite")
+    .option("overwriteSchema", "true")
+    .saveAsTable(COMPLETE_TABLE)
+)
+
+print(f"✓ Saved {complete_transformed_df.count():,} products to {COMPLETE_TABLE}")
+
+# Add table comment
+spark.sql(f"""
+    COMMENT ON TABLE {COMPLETE_TABLE} 
+    IS 'Complete Kaggle Fashion Product dataset with all metadata including descriptions'
+""")
+
+print("✓ Table created successfully")
+
+# CELL 6: Verify complete table
+# Verify the new table
+print(f"Table: {COMPLETE_TABLE}")
+print(f"\\nSchema:")
+spark.table(COMPLETE_TABLE).printSchema()
+
+# Check description coverage
+desc_stats = spark.sql(f"""
+    SELECT 
+        COUNT(*) as total_products,
+        COUNT(product_description) as products_with_description,
+        ROUND(COUNT(product_description) * 100.0 / COUNT(*), 2) as pct_with_description
+    FROM {COMPLETE_TABLE}
+""")
+
+print("\\nDescription coverage:")
+display(desc_stats)
+
+print("\\n✓ Complete dataset ready for joining with original products table")
+'''
+
+print(code_for_other_notebook)
